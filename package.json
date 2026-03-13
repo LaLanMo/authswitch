@@ -4,7 +4,8 @@
   "description": "Manage multiple Claude Code OAuth profiles with one active global login.",
   "type": "module",
   "files": [
-    "dist",
+    "dist/src",
+    "dist/package.json",
     "README.md"
   ],
   "bin": {
