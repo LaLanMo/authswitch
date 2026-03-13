@@ -5,12 +5,18 @@ import os from "node:os";
 import path from "node:path";
 
 import { AuthswitchService } from "../src/lib/service.js";
-import { AUTHSWITCH_KEYCHAIN_SERVICE, claudeKeychainService } from "../src/lib/paths.js";
+import {
+  AUTHSWITCH_KEYCHAIN_SERVICE,
+  authswitchCronLogPath,
+  authswitchCronScriptPath,
+  claudeKeychainService,
+} from "../src/lib/paths.js";
 import type { AuthBundle, CommandOptions, CommandResult, CommandRunner } from "../src/lib/types.js";
 
 class FakeRunner implements CommandRunner {
   private readonly keychain = new Map<string, string>();
   private loginCounter = 0;
+  private crontabContents = "";
 
   constructor(
     private readonly homeDir: string,
@@ -22,11 +28,17 @@ class FakeRunner implements CommandRunner {
     if (command === "which" && args[0] === "claude") {
       return { exitCode: 0, stdout: "/mock/bin/claude\n", stderr: "" };
     }
+    if (command === "which" && args[0] === "authswitch") {
+      return { exitCode: 0, stdout: "/mock/bin/authswitch\n", stderr: "" };
+    }
     if (command === "claude" && args[0] === "--version") {
       return { exitCode: 0, stdout: "2.1.71\n", stderr: "" };
     }
     if (command === "security") {
       return this.handleSecurity(args);
+    }
+    if (command === "crontab") {
+      return this.handleCrontab(args, options.input ?? "");
     }
     if (command === "claude" && args[0] === "auth" && args[1] === "login") {
       return await this.handleClaudeLogin(options.env ?? process.env);
@@ -40,6 +52,10 @@ class FakeRunner implements CommandRunner {
 
   readKeychain(service: string, account: string): string | null {
     return this.keychain.get(`${service}::${account}`) ?? null;
+  }
+
+  readCrontab(): string {
+    return this.crontabContents;
   }
 
   private handleSecurity(args: string[]): CommandResult {
@@ -68,6 +84,24 @@ class FakeRunner implements CommandRunner {
     }
 
     throw new Error(`Unexpected security args: ${args.join(" ")}`);
+  }
+
+  private handleCrontab(args: string[], input: string): CommandResult {
+    if (args[0] === "-l") {
+      if (!this.crontabContents) {
+        return { exitCode: 1, stdout: "", stderr: `crontab: no crontab for ${this.username}` };
+      }
+      return { exitCode: 0, stdout: this.crontabContents, stderr: "" };
+    }
+    if (args[0] === "-") {
+      this.crontabContents = input;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "-r") {
+      this.crontabContents = "";
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    throw new Error(`Unexpected crontab args: ${args.join(" ")}`);
   }
 
   private async handleClaudeLogin(env: NodeJS.ProcessEnv): Promise<CommandResult> {
@@ -311,4 +345,39 @@ test("remove deletes the stored profile without touching global auth", async () 
   const after = runner.readKeychain(claudeKeychainService(), username);
   assert.equal(after, before);
   assert.equal(runner.readKeychain(AUTHSWITCH_KEYCHAIN_SERVICE, "personal"), null);
+});
+
+test("cron install writes a managed renew-others entry and helper script", async () => {
+  const { service, runner, homeDir } = await createHarness();
+  const status = await service.installRenewOthersCron(2);
+
+  assert.deepEqual(status, {
+    installed: true,
+    schedule: "0 */2 * * *",
+    hours: 2,
+    scriptPath: authswitchCronScriptPath(homeDir),
+    logPath: authswitchCronLogPath(homeDir),
+  });
+  assert.match(runner.readCrontab(), /# authswitch:begin renew-others/);
+  assert.match(runner.readCrontab(), /0 \*\/2 \* \* \* /);
+  const script = await fs.readFile(authswitchCronScriptPath(homeDir), "utf8");
+  assert.match(script, /authswitch renew --others start/);
+  assert.match(script, /"\/mock\/bin\/authswitch" renew --others/);
+  assert.match(script, /authswitch renew --others finish exit=/);
+});
+
+test("cron remove clears the managed entry and helper script", async () => {
+  const { service, runner, homeDir } = await createHarness();
+  await service.installRenewOthersCron(2);
+  await service.removeCron();
+
+  assert.deepEqual(await service.cronStatus(), {
+    installed: false,
+    schedule: null,
+    hours: null,
+    scriptPath: null,
+    logPath: null,
+  });
+  assert.equal(runner.readCrontab(), "");
+  await assert.rejects(fs.access(authswitchCronScriptPath(homeDir)));
 });

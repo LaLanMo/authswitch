@@ -19,6 +19,9 @@ Usage:
   authswitch renew <profile>
   authswitch renew --current
   authswitch renew --others [--json]
+  authswitch cron install --hours <n>
+  authswitch cron status [--json]
+  authswitch cron remove
   authswitch remove <profile>
   authswitch doctor [--json]
 `);
@@ -146,6 +149,43 @@ async function main(): Promise<void> {
         `Renewed ${result.metadata.name}; accessTokenExpiresAt=${result.metadata.accessTokenExpiresAt ?? "unknown"}; lastRenewedAt=${result.metadata.lastRenewedAt ?? "unknown"}.\n`,
       );
       return;
+    }
+    case "cron": {
+      const subcommand = args[1];
+      if (subcommand === "install") {
+        const hoursFlagIndex = args.indexOf("--hours");
+        const hoursRaw = hoursFlagIndex >= 0 ? args[hoursFlagIndex + 1] : null;
+        if (!hoursRaw) {
+          throw new UserError("authswitch cron install requires --hours <n>.");
+        }
+        const hours = Number(hoursRaw);
+        const result = await service.installRenewOthersCron(hours);
+        process.stdout.write(
+          `Installed authswitch cron: schedule=${result.schedule ?? "unknown"} script=${result.scriptPath ?? "unknown"} log=${result.logPath ?? "unknown"}.\n`,
+        );
+        return;
+      }
+      if (subcommand === "status") {
+        const result = await service.cronStatus();
+        if (args.includes("--json")) {
+          printJson(result);
+          return;
+        }
+        if (!result.installed) {
+          process.stdout.write("authswitch cron is not installed.\n");
+          return;
+        }
+        process.stdout.write(
+          `installed\tschedule=${result.schedule ?? "unknown"}\thours=${result.hours ?? "unknown"}\tscript=${result.scriptPath ?? "unknown"}\n`,
+        );
+        return;
+      }
+      if (subcommand === "remove") {
+        await service.removeCron();
+        process.stdout.write("Removed authswitch cron.\n");
+        return;
+      }
+      throw new UserError("authswitch cron requires one of: install, status, remove.");
     }
     case "remove": {
       const name = args[1];

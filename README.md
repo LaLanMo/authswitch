@@ -15,6 +15,13 @@ npx authswitch use work
 claude auth status --json
 ```
 
+If you want inactive profiles to stay fresh automatically:
+
+```bash
+authswitch cron install --hours 2
+authswitch cron status --json
+```
+
 ## Status
 
 `authswitch` is currently:
@@ -82,6 +89,7 @@ You need:
 - Node.js 20+
 - `claude` available on `PATH`
 - at least one working Claude Code OAuth login on the machine
+- `crontab` available on `PATH` if you want scheduled renewals
 
 The safest first command is:
 
@@ -95,6 +103,7 @@ authswitch current --json
 - Logs into a new profile without overwriting the current global login
 - Switches the machine's global Claude login to a stored profile
 - Refreshes stored profiles with OAuth refresh tokens
+- Installs a managed cron job for refreshing inactive profiles on a schedule
 - Leaves `~/.claude/` history, tasks, cache, plans, and other non-auth state alone
 
 ## What it does not do
@@ -171,6 +180,12 @@ Refresh inactive profiles:
 authswitch renew --others
 ```
 
+Check scheduled renewal status:
+
+```bash
+authswitch cron status --json
+```
+
 Remove a stored profile:
 
 ```bash
@@ -207,6 +222,9 @@ authswitch use <profile>
 authswitch renew <profile>
 authswitch renew --others [--json]
 authswitch renew --current
+authswitch cron install --hours <n>
+authswitch cron status [--json]
+authswitch cron remove
 authswitch remove <profile>
 authswitch doctor [--json]
 ```
@@ -236,6 +254,43 @@ authswitch renew --current
 ```
 
 Refreshing the current active profile rotates the live login. Existing Claude processes may need to be restarted afterward.
+
+## Scheduled renewals
+
+If you want `authswitch` to keep inactive profiles fresh automatically, install its managed cron entry:
+
+```bash
+authswitch cron install --hours 2
+```
+
+This creates:
+
+- a user crontab entry that runs `authswitch renew --others`
+- a helper script at `~/.authswitch/bin/renew-others`
+- a log file at `~/.authswitch/renew-others.log`
+
+Check the current cron configuration:
+
+```bash
+authswitch cron status --json
+```
+
+Remove the managed cron entry:
+
+```bash
+authswitch cron remove
+```
+
+The helper script writes simple timestamped logs so failures are easy to inspect later. A successful run looks like:
+
+```text
+[2026-03-13T09:50:24Z] authswitch renew --others start
+Skipped work (current).
+Renewed personal.
+[2026-03-13T09:50:27Z] authswitch renew --others finish exit=0
+```
+
+`authswitch` does not run its own background daemon. Scheduled renewals depend on the machine's `crontab` support.
 
 ## JSON fields
 

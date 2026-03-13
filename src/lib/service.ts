@@ -10,13 +10,25 @@ import {
   runInteractiveClaudeLogin,
   runRefreshClaudeLogin,
 } from "./claude.js";
+import {
+  cleanupRenewOthersScript,
+  cronScheduleForHours,
+  findAuthswitchPath,
+  managedCronBlock,
+  parseManagedCronStatus,
+  readCrontab,
+  stripManagedCronBlock,
+  writeCrontab,
+  writeRenewOthersScript,
+} from "./cron.js";
 import { UserError } from "./errors.js";
-import { assertProfileName, authswitchTempDir } from "./paths.js";
+import { authswitchCronLogPath, assertProfileName, authswitchTempDir } from "./paths.js";
 import { NodeCommandRunner } from "./runner.js";
 import { ProfileStore } from "./store.js";
 import type {
   AuthBundle,
   CurrentProfileStatus,
+  CronStatus,
   DoctorReport,
   ProfileMetadata,
   RenewResult,
@@ -251,6 +263,31 @@ export class AuthswitchService {
       throw new UserError(`Profile ${name} does not exist.`);
     }
     await this.store.remove(name);
+  }
+
+  async installRenewOthersCron(hours: number): Promise<CronStatus> {
+    const authswitchPath = await findAuthswitchPath(this.claude.runner);
+    if (!authswitchPath) {
+      throw new UserError("authswitch cron install requires `authswitch` to be installed on PATH.");
+    }
+
+    const schedule = cronScheduleForHours(hours);
+    const scriptPath = await writeRenewOthersScript(this.claude.homeDir, authswitchPath, this.claude.env.PATH ?? "");
+    const logPath = authswitchCronLogPath(this.claude.homeDir);
+    const lines = stripManagedCronBlock(await readCrontab(this.claude.runner));
+    lines.push(...managedCronBlock(schedule, scriptPath, logPath));
+    await writeCrontab(this.claude.runner, lines);
+    return await this.cronStatus();
+  }
+
+  async cronStatus(): Promise<CronStatus> {
+    return parseManagedCronStatus(await readCrontab(this.claude.runner), this.claude.homeDir);
+  }
+
+  async removeCron(): Promise<void> {
+    const lines = stripManagedCronBlock(await readCrontab(this.claude.runner));
+    await writeCrontab(this.claude.runner, lines);
+    await cleanupRenewOthersScript(this.claude.homeDir);
   }
 
   async doctor(): Promise<DoctorReport> {

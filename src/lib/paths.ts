@@ -21,6 +21,18 @@ export function profilesDir(homeDir: string): string {
   return path.join(authswitchRoot(homeDir), "profiles");
 }
 
+export function authswitchBinDir(homeDir: string): string {
+  return path.join(authswitchRoot(homeDir), "bin");
+}
+
+export function authswitchCronScriptPath(homeDir: string): string {
+  return path.join(authswitchBinDir(homeDir), "renew-others");
+}
+
+export function authswitchCronLogPath(homeDir: string): string {
+  return path.join(authswitchRoot(homeDir), "renew-others.log");
+}
+
 export function profileMetadataPath(homeDir: string, profileName: string): string {
   return path.join(profilesDir(homeDir), `${profileName}.json`);
 }
