@@ -4,6 +4,17 @@
 
 It stores several Claude auth profiles, keeps exactly one of them active as the machine's global Claude login, and lets you switch between them without duplicating the rest of your Claude workspace state.
 
+## TL;DR
+
+If you already use Claude Code and sometimes need to switch between accounts:
+
+```bash
+npx authswitch import personal
+npx authswitch login work
+npx authswitch use work
+claude auth status --json
+```
+
 ## Status
 
 `authswitch` is currently:
@@ -27,7 +38,20 @@ Claude Code normally behaves like there is only one logged-in account on the mac
 
 ## Install
 
-`authswitch` is not published to npm yet. Today the supported install path is from source:
+Use it without installing:
+
+```bash
+npx authswitch --help
+```
+
+Or install it globally:
+
+```bash
+npm install -g authswitch
+authswitch --help
+```
+
+If you prefer to run from source:
 
 ```bash
 git clone https://github.com/LaLanMo/authswitch.git
@@ -50,6 +74,21 @@ If you want a shell command named `authswitch`, a simple local symlink works:
 ln -sf "$PWD/bundle/authswitch.js" ~/.local/bin/authswitch
 ```
 
+## Before you start
+
+You need:
+
+- macOS
+- Node.js 20+
+- `claude` available on `PATH`
+- at least one working Claude Code OAuth login on the machine
+
+The safest first command is:
+
+```bash
+authswitch current --json
+```
+
 ## What it does
 
 - Imports the current global Claude login into a named profile
@@ -65,13 +104,6 @@ ln -sf "$PWD/bundle/authswitch.js" ~/.local/bin/authswitch
 - It does not manage non-Claude auth providers yet
 - It does not tell you when a refresh token will expire, because Claude does not expose that information locally
 
-## Requirements
-
-- macOS
-- Node.js 20+
-- `claude` available on `PATH`
-- a working Claude Code OAuth login on the machine for `import`
-
 ## How it works
 
 `authswitch` keeps two different concepts separate:
@@ -86,7 +118,66 @@ Commands work roughly like this:
 - `use <profile>` makes that stored profile the machine's active Claude login
 - `renew --others` refreshes inactive stored profiles without touching the active one
 
-## Storage model
+## First-time setup
+
+### 1. Save the account you are already using
+
+```bash
+authswitch import personal
+```
+
+### 2. Add another account
+
+```bash
+authswitch login work
+```
+
+### 3. See what you have
+
+```bash
+authswitch list --json
+```
+
+### 4. Switch accounts
+
+```bash
+authswitch use work
+claude auth status --json
+```
+
+### 5. Switch back
+
+```bash
+authswitch use personal
+```
+
+## Everyday commands
+
+Check which profile is active:
+
+```bash
+authswitch current --json
+```
+
+Inspect one stored profile:
+
+```bash
+authswitch status personal --json
+```
+
+Refresh inactive profiles:
+
+```bash
+authswitch renew --others
+```
+
+Remove a stored profile:
+
+```bash
+authswitch remove work
+```
+
+## Storage and security
 
 `authswitch` stores:
 
@@ -103,45 +194,6 @@ It does not copy your `~/.claude/` working state. Only auth-related state is swi
 - `accessTokenExpiresAt` is only the short-lived access token expiry, not the lifetime of the stored profile
 
 If you are using Claude heavily in a terminal right now, avoid `renew --current` until you are ready to restart those processes.
-
-## Quick start
-
-Save the account you are already logged into:
-
-```bash
-authswitch import personal
-```
-
-Add another account in isolation:
-
-```bash
-authswitch login work
-```
-
-See what profiles you have:
-
-```bash
-authswitch list --json
-```
-
-Switch the machine's active Claude login:
-
-```bash
-authswitch use work
-claude auth status --json
-```
-
-Switch back:
-
-```bash
-authswitch use personal
-```
-
-The fastest sanity check after a switch is:
-
-```bash
-claude auth status --json
-```
 
 ## Command summary
 
@@ -194,7 +246,7 @@ Refreshing the current active profile rotates the live login. Existing Claude pr
 
 These fields do not tell you when the refresh token will expire. They only describe the short-lived access token currently stored for that profile and the last successful renewal time.
 
-## Example workflow
+## Common workflow
 
 ```bash
 authswitch import personal
@@ -205,6 +257,22 @@ claude auth status --json
 authswitch renew --others
 authswitch use personal
 ```
+
+## Troubleshooting
+
+If a switch succeeds but you want to confirm Claude really moved to the expected account:
+
+```bash
+claude auth status --json
+```
+
+If you want a quick environment sanity check:
+
+```bash
+authswitch doctor --json
+```
+
+If you refreshed the current active profile and an existing Claude process starts failing, restart that Claude process.
 
 ## Development
 
