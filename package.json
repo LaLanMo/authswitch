@@ -1,0 +1,45 @@
+{
+  "name": "authswitch",
+  "version": "0.1.0",
+  "description": "Manage multiple Claude Code OAuth profiles with one active global login.",
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "bin": {
+    "authswitch": "dist/src/cli.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "clean": "rm -rf dist bundle authswitch-*.tgz",
+    "build": "tsc -p tsconfig.json",
+    "bundle": "npm run build && node scripts/bundle.mjs",
+    "prepack": "npm run build",
+    "test": "npm run build && node --test dist/test/*.js",
+    "check": "npm run build && npm test"
+  },
+  "keywords": [
+    "claude",
+    "oauth",
+    "auth",
+    "profile",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LaLanMo/authswitch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LaLanMo/authswitch/issues"
+  },
+  "homepage": "https://github.com/LaLanMo/authswitch#readme",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "esbuild": "^0.25.1",
+    "typescript": "^5.8.2"
+  }
+}
