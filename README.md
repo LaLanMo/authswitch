@@ -4,6 +4,14 @@
 
 It stores several Claude auth profiles, keeps exactly one of them active as the machine's global Claude login, and lets you switch between them without duplicating the rest of your Claude workspace state.
 
+## Status
+
+`authswitch` is currently:
+
+- macOS-only
+- Claude.ai OAuth-only
+- pre-1.0 and still settling its CLI/data model
+
 ## Why this exists
 
 Claude Code normally behaves like there is only one logged-in account on the machine. That is inconvenient if you regularly switch between:
@@ -16,6 +24,31 @@ Claude Code normally behaves like there is only one logged-in account on the mac
 
 - the current active Claude login
 - a local profile store of other saved Claude OAuth accounts
+
+## Install
+
+`authswitch` is not published to npm yet. Today the supported install path is from source:
+
+```bash
+git clone https://github.com/LaLanMo/authswitch.git
+cd authswitch
+npm install
+npm run build
+node dist/src/cli.js --help
+```
+
+If you want a single-file local entrypoint:
+
+```bash
+npm run bundle
+./bundle/authswitch.js --help
+```
+
+If you want a shell command named `authswitch`, a simple local symlink works:
+
+```bash
+ln -sf "$PWD/bundle/authswitch.js" ~/.local/bin/authswitch
+```
 
 ## What it does
 
@@ -39,6 +72,20 @@ Claude Code normally behaves like there is only one logged-in account on the mac
 - `claude` available on `PATH`
 - a working Claude Code OAuth login on the machine for `import`
 
+## How it works
+
+`authswitch` keeps two different concepts separate:
+
+- the machine's current active Claude login
+- a local store of saved auth profiles
+
+Commands work roughly like this:
+
+- `import <profile>` snapshots the account you are currently logged into
+- `login <profile>` creates a new stored profile in isolation, without replacing the current global login
+- `use <profile>` makes that stored profile the machine's active Claude login
+- `renew --others` refreshes inactive stored profiles without touching the active one
+
 ## Storage model
 
 `authswitch` stores:
@@ -47,6 +94,15 @@ Claude Code normally behaves like there is only one logged-in account on the mac
 - sensitive OAuth material in macOS Keychain
 
 It does not copy your `~/.claude/` working state. Only auth-related state is switched.
+
+## Safety notes
+
+- `use <profile>` changes the machine's global Claude login
+- `renew --current` rotates the current live login and may invalidate already-running Claude processes
+- `renew --others` is the safe maintenance command for background scheduling because it skips the active profile on purpose
+- `accessTokenExpiresAt` is only the short-lived access token expiry, not the lifetime of the stored profile
+
+If you are using Claude heavily in a terminal right now, avoid `renew --current` until you are ready to restart those processes.
 
 ## Quick start
 
@@ -79,6 +135,12 @@ Switch back:
 
 ```bash
 authswitch use personal
+```
+
+The fastest sanity check after a switch is:
+
+```bash
+claude auth status --json
 ```
 
 ## Command summary
@@ -131,6 +193,18 @@ Refreshing the current active profile rotates the live login. Existing Claude pr
 - `lastRenewedAt`: when `authswitch` last refreshed that stored profile
 
 These fields do not tell you when the refresh token will expire. They only describe the short-lived access token currently stored for that profile and the last successful renewal time.
+
+## Example workflow
+
+```bash
+authswitch import personal
+authswitch login work
+authswitch list --json
+authswitch use work
+claude auth status --json
+authswitch renew --others
+authswitch use personal
+```
 
 ## Development
 
