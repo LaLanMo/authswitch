@@ -1,6 +1,6 @@
 {
   "name": "authswitch",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Manage multiple Claude Code OAuth profiles with one active global login.",
   "type": "module",
   "files": [
@@ -16,7 +16,7 @@
   },
   "scripts": {
     "clean": "rm -rf dist bundle authswitch-*.tgz",
-    "build": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
     "bundle": "npm run build && node scripts/bundle.mjs",
     "prepack": "npm run build",
     "test": "npm run build && node --test dist/test/*.js",

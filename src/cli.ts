@@ -19,9 +19,9 @@ Usage:
   authswitch renew <profile>
   authswitch renew --current
   authswitch renew --others [--json]
-  authswitch cron install --hours <n>
-  authswitch cron status [--json]
-  authswitch cron remove
+  authswitch launchd install --hours <n>
+  authswitch launchd status [--json]
+  authswitch launchd remove
   authswitch remove <profile>
   authswitch doctor [--json]
 `);
@@ -109,9 +109,6 @@ async function main(): Promise<void> {
       return;
     }
     case "renew": {
-      if (args[1] === "--all") {
-        throw new UserError("authswitch renew --all was removed. Use authswitch renew --others.");
-      }
       if (args[1] === "--current") {
         const result = await service.renewCurrentProfile();
         process.stdout.write(
@@ -127,7 +124,8 @@ async function main(): Promise<void> {
         } else {
           for (const result of results) {
             if (result.skipped) {
-              process.stdout.write(`Skipped ${result.profile} (current).\n`);
+              const reason = result.skipReason === "not-due" ? "not due" : "current";
+              process.stdout.write(`Skipped ${result.profile} (${reason}).\n`);
             } else if (result.ok) {
               process.stdout.write(`Renewed ${result.profile}.\n`);
             } else {
@@ -150,42 +148,42 @@ async function main(): Promise<void> {
       );
       return;
     }
-    case "cron": {
+    case "launchd": {
       const subcommand = args[1];
       if (subcommand === "install") {
         const hoursFlagIndex = args.indexOf("--hours");
         const hoursRaw = hoursFlagIndex >= 0 ? args[hoursFlagIndex + 1] : null;
         if (!hoursRaw) {
-          throw new UserError("authswitch cron install requires --hours <n>.");
+          throw new UserError("authswitch launchd install requires --hours <n>.");
         }
         const hours = Number(hoursRaw);
-        const result = await service.installRenewOthersCron(hours);
+        const result = await service.installRenewOthersLaunchd(hours);
         process.stdout.write(
-          `Installed authswitch cron: schedule=${result.schedule ?? "unknown"} script=${result.scriptPath ?? "unknown"} log=${result.logPath ?? "unknown"}.\n`,
+          `Installed authswitch launchd agent: schedule=${result.schedule ?? "unknown"} script=${result.scriptPath ?? "unknown"} log=${result.logPath ?? "unknown"} plist=${result.plistPath ?? "unknown"}.\n`,
         );
         return;
       }
       if (subcommand === "status") {
-        const result = await service.cronStatus();
+        const result = await service.launchdStatus();
         if (args.includes("--json")) {
           printJson(result);
           return;
         }
         if (!result.installed) {
-          process.stdout.write("authswitch cron is not installed.\n");
+          process.stdout.write("authswitch launchd agent is not installed.\n");
           return;
         }
         process.stdout.write(
-          `installed\tschedule=${result.schedule ?? "unknown"}\thours=${result.hours ?? "unknown"}\tscript=${result.scriptPath ?? "unknown"}\n`,
+          `installed\tschedule=${result.schedule ?? "unknown"}\thours=${result.hours ?? "unknown"}\tscript=${result.scriptPath ?? "unknown"}\tplist=${result.plistPath ?? "unknown"}\n`,
         );
         return;
       }
       if (subcommand === "remove") {
-        await service.removeCron();
-        process.stdout.write("Removed authswitch cron.\n");
+        await service.removeLaunchd();
+        process.stdout.write("Removed authswitch launchd agent.\n");
         return;
       }
-      throw new UserError("authswitch cron requires one of: install, status, remove.");
+      throw new UserError("authswitch launchd requires one of: install, status, remove.");
     }
     case "remove": {
       const name = args[1];

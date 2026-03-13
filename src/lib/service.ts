@@ -12,24 +12,23 @@ import {
 } from "./claude.js";
 import {
   cleanupRenewOthersScript,
-  cronScheduleForHours,
   findAuthswitchPath,
-  managedCronBlock,
-  parseManagedCronStatus,
-  readCrontab,
-  stripManagedCronBlock,
-  writeCrontab,
+  installLaunchAgent,
+  launchdScheduleForHours,
+  launchdStatus,
+  removeLaunchAgent,
   writeRenewOthersScript,
-} from "./cron.js";
+  writeRenewOthersPlist,
+} from "./launchd.js";
 import { UserError } from "./errors.js";
-import { authswitchCronLogPath, assertProfileName, authswitchTempDir } from "./paths.js";
+import { assertProfileName, authswitchRenewOthersLogPath, authswitchTempDir } from "./paths.js";
 import { NodeCommandRunner } from "./runner.js";
 import { ProfileStore } from "./store.js";
 import type {
   AuthBundle,
   CurrentProfileStatus,
-  CronStatus,
   DoctorReport,
+  LaunchdStatus,
   ProfileMetadata,
   RenewResult,
   StoredProfile,
@@ -39,6 +38,7 @@ import type {
 export interface ServiceOptions {
   homeDir?: string;
   username?: string;
+  uid?: number;
   env?: NodeJS.ProcessEnv;
   runner?: CommandRunner;
   now?: () => Date;
@@ -65,9 +65,19 @@ function shouldSyncLiveBundle(live: AuthBundle, stored: AuthBundle): boolean {
   return live.claudeAiOauth.expiresAt > stored.claudeAiOauth.expiresAt;
 }
 
+const RENEWAL_WINDOW_MS = 2 * 60 * 60 * 1000;
+
+function isRenewalDue(accessTokenExpiresAt: number | null, nowMs: number): boolean {
+  if (accessTokenExpiresAt === null) {
+    return true;
+  }
+  return accessTokenExpiresAt <= nowMs + RENEWAL_WINDOW_MS;
+}
+
 export class AuthswitchService {
   private readonly now: () => Date;
   private readonly randomUUID: () => string;
+  private readonly uid: number;
   readonly claude;
   readonly store: ProfileStore;
 
@@ -80,6 +90,7 @@ export class AuthswitchService {
       env: options.env ?? defaults.env,
       runner,
     };
+    this.uid = options.uid ?? process.getuid?.() ?? 0;
     this.now = options.now ?? (() => new Date());
     this.randomUUID = options.randomUUID ?? nodeRandomUUID;
     this.store = new ProfileStore(this.claude.homeDir, runner, () => this.now().toISOString());
@@ -115,8 +126,7 @@ export class AuthswitchService {
     return profiles.map((profile) => ({
       ...profile,
       current: currentMatch?.name === profile.name,
-      needsRenewal:
-        profile.accessTokenExpiresAt !== null ? profile.accessTokenExpiresAt <= this.now().getTime() : true,
+      needsRenewal: isRenewalDue(profile.accessTokenExpiresAt, this.now().getTime()),
     }));
   }
 
@@ -152,10 +162,7 @@ export class AuthswitchService {
     return {
       ...profile.metadata,
       current: currentMatch?.name === name,
-      needsRenewal:
-        profile.metadata.accessTokenExpiresAt !== null
-          ? profile.metadata.accessTokenExpiresAt <= this.now().getTime()
-          : true,
+      needsRenewal: isRenewalDue(profile.metadata.accessTokenExpiresAt, this.now().getTime()),
     };
   }
 
@@ -236,10 +243,15 @@ export class AuthswitchService {
     const current = await this.readCurrentBundle();
     const currentMatch = current ? await this.findMatchingProfile(current) : null;
     const profiles = await this.store.listMetadata();
+    const nowMs = this.now().getTime();
     const results: RenewResult[] = [];
     for (const profile of profiles) {
       if (currentMatch?.name === profile.name) {
-        results.push({ profile: profile.name, ok: true, skipped: true });
+        results.push({ profile: profile.name, ok: true, skipped: true, skipReason: "current" });
+        continue;
+      }
+      if (!isRenewalDue(profile.accessTokenExpiresAt, nowMs)) {
+        results.push({ profile: profile.name, ok: true, skipped: true, skipReason: "not-due" });
         continue;
       }
       try {
@@ -265,28 +277,25 @@ export class AuthswitchService {
     await this.store.remove(name);
   }
 
-  async installRenewOthersCron(hours: number): Promise<CronStatus> {
+  async installRenewOthersLaunchd(hours: number): Promise<LaunchdStatus> {
     const authswitchPath = await findAuthswitchPath(this.claude.runner);
     if (!authswitchPath) {
-      throw new UserError("authswitch cron install requires `authswitch` to be installed on PATH.");
+      throw new UserError("authswitch launchd install requires `authswitch` to be installed on PATH.");
     }
 
-    const schedule = cronScheduleForHours(hours);
-    const scriptPath = await writeRenewOthersScript(this.claude.homeDir, authswitchPath, this.claude.env.PATH ?? "");
-    const logPath = authswitchCronLogPath(this.claude.homeDir);
-    const lines = stripManagedCronBlock(await readCrontab(this.claude.runner));
-    lines.push(...managedCronBlock(schedule, scriptPath, logPath));
-    await writeCrontab(this.claude.runner, lines);
-    return await this.cronStatus();
+    launchdScheduleForHours(hours);
+    await writeRenewOthersScript(this.claude.homeDir, authswitchPath, this.claude.env.PATH ?? "");
+    const plistPath = await writeRenewOthersPlist(this.claude.homeDir, hours);
+    await installLaunchAgent(this.claude.runner, this.uid, plistPath);
+    return await this.launchdStatus();
   }
 
-  async cronStatus(): Promise<CronStatus> {
-    return parseManagedCronStatus(await readCrontab(this.claude.runner), this.claude.homeDir);
+  async launchdStatus(): Promise<LaunchdStatus> {
+    return await launchdStatus(this.claude.runner, this.uid, this.claude.homeDir);
   }
 
-  async removeCron(): Promise<void> {
-    const lines = stripManagedCronBlock(await readCrontab(this.claude.runner));
-    await writeCrontab(this.claude.runner, lines);
+  async removeLaunchd(): Promise<void> {
+    await removeLaunchAgent(this.claude.runner, this.uid, this.claude.homeDir);
     await cleanupRenewOthersScript(this.claude.homeDir);
   }
 

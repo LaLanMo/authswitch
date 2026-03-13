@@ -70,12 +70,14 @@ export interface DoctorReport {
   externalClaudeConfigDirPresent: boolean;
 }
 
-export interface CronStatus {
+export interface LaunchdStatus {
   installed: boolean;
   schedule: string | null;
   hours: number | null;
   scriptPath: string | null;
   logPath: string | null;
+  plistPath: string | null;
+  label: string | null;
 }
 
 export interface RenewResult {
@@ -83,6 +85,7 @@ export interface RenewResult {
   ok: boolean;
   error?: string;
   skipped?: boolean;
+  skipReason?: "current" | "not-due";
 }
 
 export interface CommandResult {

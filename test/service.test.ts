@@ -7,8 +7,10 @@ import path from "node:path";
 import { AuthswitchService } from "../src/lib/service.js";
 import {
   AUTHSWITCH_KEYCHAIN_SERVICE,
-  authswitchCronLogPath,
-  authswitchCronScriptPath,
+  AUTHSWITCH_LAUNCHD_LABEL,
+  authswitchLaunchdPlistPath,
+  authswitchRenewOthersLogPath,
+  authswitchRenewOthersScriptPath,
   claudeKeychainService,
 } from "../src/lib/paths.js";
 import type { AuthBundle, CommandOptions, CommandResult, CommandRunner } from "../src/lib/types.js";
@@ -16,7 +18,7 @@ import type { AuthBundle, CommandOptions, CommandResult, CommandRunner } from ".
 class FakeRunner implements CommandRunner {
   private readonly keychain = new Map<string, string>();
   private loginCounter = 0;
-  private crontabContents = "";
+  private launchdLoaded = false;
 
   constructor(
     private readonly homeDir: string,
@@ -37,8 +39,8 @@ class FakeRunner implements CommandRunner {
     if (command === "security") {
       return this.handleSecurity(args);
     }
-    if (command === "crontab") {
-      return this.handleCrontab(args, options.input ?? "");
+    if (command === "launchctl") {
+      return this.handleLaunchctl(args);
     }
     if (command === "claude" && args[0] === "auth" && args[1] === "login") {
       return await this.handleClaudeLogin(options.env ?? process.env);
@@ -54,8 +56,8 @@ class FakeRunner implements CommandRunner {
     return this.keychain.get(`${service}::${account}`) ?? null;
   }
 
-  readCrontab(): string {
-    return this.crontabContents;
+  isLaunchdLoaded(): boolean {
+    return this.launchdLoaded;
   }
 
   private handleSecurity(args: string[]): CommandResult {
@@ -86,22 +88,23 @@ class FakeRunner implements CommandRunner {
     throw new Error(`Unexpected security args: ${args.join(" ")}`);
   }
 
-  private handleCrontab(args: string[], input: string): CommandResult {
-    if (args[0] === "-l") {
-      if (!this.crontabContents) {
-        return { exitCode: 1, stdout: "", stderr: `crontab: no crontab for ${this.username}` };
+  private handleLaunchctl(args: string[]): CommandResult {
+    if (args[0] === "bootstrap") {
+      this.launchdLoaded = true;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "bootout") {
+      this.launchdLoaded = false;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "print") {
+      const target = args[1] ?? "";
+      if (this.launchdLoaded && target.endsWith(`/${AUTHSWITCH_LAUNCHD_LABEL}`)) {
+        return { exitCode: 0, stdout: `${AUTHSWITCH_LAUNCHD_LABEL}\n`, stderr: "" };
       }
-      return { exitCode: 0, stdout: this.crontabContents, stderr: "" };
+      return { exitCode: 113, stdout: "", stderr: "Could not find service" };
     }
-    if (args[0] === "-") {
-      this.crontabContents = input;
-      return { exitCode: 0, stdout: "", stderr: "" };
-    }
-    if (args[0] === "-r") {
-      this.crontabContents = "";
-      return { exitCode: 0, stdout: "", stderr: "" };
-    }
-    throw new Error(`Unexpected crontab args: ${args.join(" ")}`);
+    throw new Error(`Unexpected launchctl args: ${args.join(" ")}`);
   }
 
   private async handleClaudeLogin(env: NodeJS.ProcessEnv): Promise<CommandResult> {
@@ -221,6 +224,7 @@ async function createHarness(): Promise<{
     service: new AuthswitchService({
       homeDir,
       username,
+      uid: 501,
       runner,
       env: {},
       randomUUID: (() => {
@@ -327,7 +331,7 @@ test("renew others skips the active profile and refreshes only non-current profi
 
   assert.equal(results.length, 2);
   assert.deepEqual(results, [
-    { profile: "personal", ok: true, skipped: true },
+    { profile: "personal", ok: true, skipped: true, skipReason: "current" },
     { profile: "work", ok: true },
   ]);
   assert.equal(after, before);
@@ -335,6 +339,33 @@ test("renew others skips the active profile and refreshes only non-current profi
     oauthAccount: { emailAddress: string };
   };
   assert.equal(globalConfig.oauthAccount.emailAddress, "personal@example.com");
+});
+
+test("renew others skips inactive profiles that are not yet due", async () => {
+  const { service } = await createHarness();
+  await service.importProfile("personal");
+  const work = await service.loginProfile("work");
+
+  await service.store.save(
+    "work",
+    {
+      ...work.bundle,
+      claudeAiOauth: {
+        ...work.bundle.claudeAiOauth,
+        expiresAt: Date.now() + 6 * 60 * 60 * 1000,
+      },
+    },
+    work.metadata.lastRenewedAt,
+  );
+
+  const results = await service.renewOtherProfiles();
+
+  assert.deepEqual(results, [
+    { profile: "personal", ok: true, skipped: true, skipReason: "current" },
+    { profile: "work", ok: true, skipped: true, skipReason: "not-due" },
+  ]);
+  const status = await service.status("work");
+  assert.equal(status.needsRenewal, false);
 });
 
 test("remove deletes the stored profile without touching global auth", async () => {
@@ -347,37 +378,45 @@ test("remove deletes the stored profile without touching global auth", async () 
   assert.equal(runner.readKeychain(AUTHSWITCH_KEYCHAIN_SERVICE, "personal"), null);
 });
 
-test("cron install writes a managed renew-others entry and helper script", async () => {
+test("launchd install writes a managed renew-others agent and helper script", async () => {
   const { service, runner, homeDir } = await createHarness();
-  const status = await service.installRenewOthersCron(2);
+  const status = await service.installRenewOthersLaunchd(2);
 
   assert.deepEqual(status, {
     installed: true,
     schedule: "0 */2 * * *",
     hours: 2,
-    scriptPath: authswitchCronScriptPath(homeDir),
-    logPath: authswitchCronLogPath(homeDir),
+    scriptPath: authswitchRenewOthersScriptPath(homeDir),
+    logPath: authswitchRenewOthersLogPath(homeDir),
+    plistPath: authswitchLaunchdPlistPath(homeDir),
+    label: AUTHSWITCH_LAUNCHD_LABEL,
   });
-  assert.match(runner.readCrontab(), /# authswitch:begin renew-others/);
-  assert.match(runner.readCrontab(), /0 \*\/2 \* \* \* /);
-  const script = await fs.readFile(authswitchCronScriptPath(homeDir), "utf8");
+  assert.equal(runner.isLaunchdLoaded(), true);
+  const script = await fs.readFile(authswitchRenewOthersScriptPath(homeDir), "utf8");
   assert.match(script, /authswitch renew --others start/);
   assert.match(script, /"\/mock\/bin\/authswitch" renew --others/);
   assert.match(script, /authswitch renew --others finish exit=/);
+  assert.match(script, /exit_code=\$\?/);
+  const plist = await fs.readFile(authswitchLaunchdPlistPath(homeDir), "utf8");
+  assert.match(plist, /authswitch-hours: 2/);
+  assert.match(plist, new RegExp(AUTHSWITCH_LAUNCHD_LABEL));
 });
 
-test("cron remove clears the managed entry and helper script", async () => {
+test("launchd remove clears the agent plist and helper script", async () => {
   const { service, runner, homeDir } = await createHarness();
-  await service.installRenewOthersCron(2);
-  await service.removeCron();
+  await service.installRenewOthersLaunchd(2);
+  await service.removeLaunchd();
 
-  assert.deepEqual(await service.cronStatus(), {
+  assert.deepEqual(await service.launchdStatus(), {
     installed: false,
     schedule: null,
     hours: null,
     scriptPath: null,
     logPath: null,
+    plistPath: null,
+    label: null,
   });
-  assert.equal(runner.readCrontab(), "");
-  await assert.rejects(fs.access(authswitchCronScriptPath(homeDir)));
+  assert.equal(runner.isLaunchdLoaded(), false);
+  await assert.rejects(fs.access(authswitchRenewOthersScriptPath(homeDir)));
+  await assert.rejects(fs.access(authswitchLaunchdPlistPath(homeDir)));
 });

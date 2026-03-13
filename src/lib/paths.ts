@@ -5,6 +5,7 @@ import { UserError } from "./errors.js";
 
 export const AUTHSWITCH_KEYCHAIN_SERVICE = "authswitch-profile";
 export const CLAUDE_KEYCHAIN_BASE_SERVICE = "Claude Code-credentials";
+export const AUTHSWITCH_LAUNCHD_LABEL = "com.authswitch.renew-others";
 export const PROFILE_NAME_RE = /^[A-Za-z0-9._-]+$/;
 
 export function assertProfileName(name: string): void {
@@ -25,12 +26,20 @@ export function authswitchBinDir(homeDir: string): string {
   return path.join(authswitchRoot(homeDir), "bin");
 }
 
-export function authswitchCronScriptPath(homeDir: string): string {
+export function authswitchRenewOthersScriptPath(homeDir: string): string {
   return path.join(authswitchBinDir(homeDir), "renew-others");
 }
 
-export function authswitchCronLogPath(homeDir: string): string {
+export function authswitchRenewOthersLogPath(homeDir: string): string {
   return path.join(authswitchRoot(homeDir), "renew-others.log");
+}
+
+export function launchAgentsDir(homeDir: string): string {
+  return path.join(homeDir, "Library", "LaunchAgents");
+}
+
+export function authswitchLaunchdPlistPath(homeDir: string): string {
+  return path.join(launchAgentsDir(homeDir), `${AUTHSWITCH_LAUNCHD_LABEL}.plist`);
 }
 
 export function profileMetadataPath(homeDir: string, profileName: string): string {

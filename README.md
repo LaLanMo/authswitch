@@ -18,8 +18,8 @@ claude auth status --json
 If you want inactive profiles to stay fresh automatically:
 
 ```bash
-authswitch cron install --hours 2
-authswitch cron status --json
+authswitch launchd install --hours 2
+authswitch launchd status --json
 ```
 
 ## Status
@@ -89,7 +89,7 @@ You need:
 - Node.js 20+
 - `claude` available on `PATH`
 - at least one working Claude Code OAuth login on the machine
-- `crontab` available on `PATH` if you want scheduled renewals
+- a logged-in macOS user session if you want scheduled renewals
 
 The safest first command is:
 
@@ -103,7 +103,7 @@ authswitch current --json
 - Logs into a new profile without overwriting the current global login
 - Switches the machine's global Claude login to a stored profile
 - Refreshes stored profiles with OAuth refresh tokens
-- Installs a managed cron job for refreshing inactive profiles on a schedule
+- Installs a managed LaunchAgent for refreshing inactive profiles on a schedule
 - Leaves `~/.claude/` history, tasks, cache, plans, and other non-auth state alone
 
 ## What it does not do
@@ -126,6 +126,8 @@ Commands work roughly like this:
 - `login <profile>` creates a new stored profile in isolation, without replacing the current global login
 - `use <profile>` makes that stored profile the machine's active Claude login
 - `renew --others` refreshes inactive stored profiles without touching the active one
+
+Scheduled renewals are conservative on purpose: `authswitch` only attempts to refresh inactive profiles when their stored access token is within the renewal window. Profiles that are still comfortably valid are skipped as `not due` instead of forcing an early refresh.
 
 ## First-time setup
 
@@ -183,7 +185,7 @@ authswitch renew --others
 Check scheduled renewal status:
 
 ```bash
-authswitch cron status --json
+authswitch launchd status --json
 ```
 
 Remove a stored profile:
@@ -206,6 +208,7 @@ It does not copy your `~/.claude/` working state. Only auth-related state is swi
 - `use <profile>` changes the machine's global Claude login
 - `renew --current` rotates the current live login and may invalidate already-running Claude processes
 - `renew --others` is the safe maintenance command for background scheduling because it skips the active profile on purpose
+- `renew --others` also skips inactive profiles that are still outside the renewal window
 - `accessTokenExpiresAt` is only the short-lived access token expiry, not the lifetime of the stored profile
 
 If you are using Claude heavily in a terminal right now, avoid `renew --current` until you are ready to restart those processes.
@@ -222,9 +225,9 @@ authswitch use <profile>
 authswitch renew <profile>
 authswitch renew --others [--json]
 authswitch renew --current
-authswitch cron install --hours <n>
-authswitch cron status [--json]
-authswitch cron remove
+authswitch launchd install --hours <n>
+authswitch launchd status [--json]
+authswitch launchd remove
 authswitch remove <profile>
 authswitch doctor [--json]
 ```
@@ -239,7 +242,9 @@ Refresh all inactive profiles:
 authswitch renew --others
 ```
 
-This is the intended command for cron or launchd. It skips the currently active profile on purpose.
+This is the intended command for scheduled background maintenance. It skips the currently active profile on purpose.
+
+It also skips inactive profiles that are still outside the renewal window, so a frequent LaunchAgent schedule does not force premature refresh attempts.
 
 Refresh one inactive profile:
 
@@ -257,28 +262,28 @@ Refreshing the current active profile rotates the live login. Existing Claude pr
 
 ## Scheduled renewals
 
-If you want `authswitch` to keep inactive profiles fresh automatically, install its managed cron entry:
+If you want `authswitch` to keep inactive profiles fresh automatically, install its managed LaunchAgent:
 
 ```bash
-authswitch cron install --hours 2
+authswitch launchd install --hours 2
 ```
 
 This creates:
 
-- a user crontab entry that runs `authswitch renew --others`
+- a LaunchAgent plist at `~/Library/LaunchAgents/com.authswitch.renew-others.plist`
 - a helper script at `~/.authswitch/bin/renew-others`
 - a log file at `~/.authswitch/renew-others.log`
 
-Check the current cron configuration:
+Check the current LaunchAgent configuration:
 
 ```bash
-authswitch cron status --json
+authswitch launchd status --json
 ```
 
-Remove the managed cron entry:
+Remove the managed LaunchAgent:
 
 ```bash
-authswitch cron remove
+authswitch launchd remove
 ```
 
 The helper script writes simple timestamped logs so failures are easy to inspect later. A successful run looks like:
@@ -290,7 +295,16 @@ Renewed personal.
 [2026-03-13T09:50:27Z] authswitch renew --others finish exit=0
 ```
 
-`authswitch` does not run its own background daemon. Scheduled renewals depend on the machine's `crontab` support.
+When no inactive profile is close enough to expiry yet, the log will show a safe no-op run instead:
+
+```text
+[2026-03-13T13:50:58Z] authswitch renew --others start
+Skipped work (current).
+Skipped personal (not due).
+[2026-03-13T13:50:58Z] authswitch renew --others finish exit=0
+```
+
+`authswitch` does not run its own background daemon. Scheduled renewals use macOS `launchd`, not `cron`, because the profile store lives in the macOS login keychain and `cron` cannot read that keychain reliably in a non-interactive session.
 
 ## JSON fields
 
@@ -299,7 +313,7 @@ Renewed personal.
 - `accessTokenExpiresAt`: when the currently stored access token expires
 - `lastRenewedAt`: when `authswitch` last refreshed that stored profile
 
-These fields do not tell you when the refresh token will expire. They only describe the short-lived access token currently stored for that profile and the last successful renewal time.
+These fields do not tell you when the refresh token will expire. They describe the short-lived access token currently stored for that profile and the last successful renewal time. `needsRenewal` is a scheduler-oriented signal: it flips true when the stored access token enters authswitch's renewal window, not only after it is already expired.
 
 ## Common workflow
 
