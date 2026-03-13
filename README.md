@@ -1,59 +1,121 @@
 # authswitch
 
-`authswitch` manages multiple Claude Code OAuth profiles while keeping exactly one global active login.
+`authswitch` is a macOS CLI for people who use multiple Claude Code OAuth accounts on one machine.
 
-## What v1 does
+It stores several Claude auth profiles, keeps exactly one of them active as the machine's global Claude login, and lets you switch between them without duplicating the rest of your Claude workspace state.
+
+## Why this exists
+
+Claude Code normally behaves like there is only one logged-in account on the machine. That is inconvenient if you regularly switch between:
+
+- personal and work accounts
+- different organizations
+- backup accounts you want to keep healthy but not actively use
+
+`authswitch` solves that by separating:
+
+- the current active Claude login
+- a local profile store of other saved Claude OAuth accounts
+
+## What it does
 
 - Imports the current global Claude login into a named profile
 - Logs into a new profile without overwriting the current global login
 - Switches the machine's global Claude login to a stored profile
 - Refreshes stored profiles with OAuth refresh tokens
-- Leaves `~/.claude/` history, tasks, cache, and other non-auth state alone
+- Leaves `~/.claude/` history, tasks, cache, plans, and other non-auth state alone
 
-## What v1 does not do
+## What it does not do
 
 - It does not support multiple active profiles at the same time
 - It does not duplicate `~/.claude/`
 - It does not manage non-Claude auth providers yet
+- It does not tell you when a refresh token will expire, because Claude does not expose that information locally
 
-## Commands
+## Requirements
+
+- macOS
+- Node.js 20+
+- `claude` available on `PATH`
+- a working Claude Code OAuth login on the machine for `import`
+
+## Storage model
+
+`authswitch` stores:
+
+- profile metadata in `~/.authswitch/profiles/*.json`
+- sensitive OAuth material in macOS Keychain
+
+It does not copy your `~/.claude/` working state. Only auth-related state is switched.
+
+## Quick start
+
+Save the account you are already logged into:
 
 ```bash
 authswitch import personal
+```
+
+Add another account in isolation:
+
+```bash
 authswitch login work
-authswitch list
-authswitch current
-authswitch status personal
+```
+
+See what profiles you have:
+
+```bash
+authswitch list --json
+```
+
+Switch the machine's active Claude login:
+
+```bash
 authswitch use work
-authswitch renew personal
-authswitch renew --others
+claude auth status --json
+```
+
+Switch back:
+
+```bash
+authswitch use personal
+```
+
+## Command summary
+
+```bash
+authswitch import <profile> [--replace]
+authswitch login <profile> [--replace]
+authswitch list [--json]
+authswitch current [--json]
+authswitch status <profile> [--json]
+authswitch use <profile>
+authswitch renew <profile>
+authswitch renew --others [--json]
 authswitch renew --current
-authswitch remove work
-authswitch doctor
+authswitch remove <profile>
+authswitch doctor [--json]
 ```
 
-## Bundled CLI
+## Renew semantics
 
-To generate a single-file bundled CLI that still runs against your local `claude` and macOS Keychain:
+`authswitch` treats the current active profile and inactive stored profiles differently.
 
-```bash
-npm run bundle
-./bundle/authswitch.js --help
-```
-
-The bundle output is `bundle/authswitch.js`. It still requires Node on the host, but you do not need the TypeScript source tree to run that file.
-
-## Auto-renew
-
-Stored profiles can be refreshed without switching the active global login:
+Refresh all inactive profiles:
 
 ```bash
 authswitch renew --others
 ```
 
-This is the intended command for cron or launchd. `authswitch` does not install a scheduler.
+This is the intended command for cron or launchd. It skips the currently active profile on purpose.
 
-`authswitch renew <profile>` only targets a named non-current profile. If you need to rotate the current active profile, use:
+Refresh one inactive profile:
+
+```bash
+authswitch renew personal
+```
+
+Refresh the currently active profile:
 
 ```bash
 authswitch renew --current
@@ -61,9 +123,40 @@ authswitch renew --current
 
 Refreshing the current active profile rotates the live login. Existing Claude processes may need to be restarted afterward.
 
-`list --json` and `status --json` surface:
+## JSON fields
+
+`list --json` and `status --json` expose:
 
 - `accessTokenExpiresAt`: when the currently stored access token expires
 - `lastRenewedAt`: when `authswitch` last refreshed that stored profile
 
-This does not tell you when the refresh token will expire. It only describes the short-lived access token currently stored for that profile and the last successful renewal time.
+These fields do not tell you when the refresh token will expire. They only describe the short-lived access token currently stored for that profile and the last successful renewal time.
+
+## Development
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run tests:
+
+```bash
+npm test
+```
+
+Build the compiled CLI:
+
+```bash
+npm run build
+```
+
+Build the single-file bundled CLI:
+
+```bash
+npm run bundle
+./bundle/authswitch.js --help
+```
+
+The bundle still requires Node on the host, but it does not require the TypeScript source tree at runtime.
